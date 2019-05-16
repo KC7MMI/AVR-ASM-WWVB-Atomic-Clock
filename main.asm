@@ -51,78 +51,78 @@
 .def p_h = r25		; 16-bit Prescaler
 .def p_l = r24		; 16-bit Prescaler
 
-.cseg				; Code Segment
-.org 0				; Start Program at Address 0
+.cseg			; Code Segment
+.org 0			; Start Program at Address 0
 
 
 start:	clr ss			; Clear Register
-		clr mm			; Clear Register
-		clr hh			; Clear Register
-		clr d_h			; Clear Register
-		clr d_l			; Clear Register
-		clr yr			; Clear Register
-		clr lpd			; Clear Register
-		clr fnr			; Clear Register
-		clr sel			; Clear Register
-		clr pbv			; Clear Register
-		clr tmp			; Clear Register
-		clr seg			; Clear Register
-		clr ctr			; Clear Register
-		clr p_h			; Clear Register
-		clr p_l			; Clear Register
-		ldi tmp, $ff	; Setup PORTB & PORTD as outputs
-		out DDRB, tmp	; Setup PORTB
-		out DDRD, tmp	; Setup PORTD
-		ldi tmp, $3f	; Setup PORTC with 6 as input and 5:0 as output
-		out DDRC, tmp	; Setup PORTC
-wwvbin: in tmp, DDRC	; Read PORTC for WWVB pulse
-		andi tmp, WWVB	; Filter PORTC to WWVB input only
-		cpi tmp, WWVB	; Check to see if input is high for WWVB pulse
-		brne wwvbin		; If not high, loop and check again
-		rcall pulses	; Relative Call to pulses subroutine
-		clr pbv			; Clear pulse bit value register
-		rcall pvalue	; Relative Call to ptimer (pulse timer to determine 0-bit or 1-bit)
-		//we have value of pulse...now what???
+	clr mm			; Clear Register
+	clr hh			; Clear Register
+	clr d_h			; Clear Register
+	clr d_l			; Clear Register
+	clr yr			; Clear Register
+	clr lpd			; Clear Register
+	clr fnr			; Clear Register
+	clr sel			; Clear Register
+	clr pbv			; Clear Register
+	clr tmp			; Clear Register
+	clr seg			; Clear Register
+	clr ctr			; Clear Register
+	clr p_h			; Clear Register
+	clr p_l			; Clear Register
+	ldi tmp, $ff		; Setup PORTB & PORTD as outputs
+	out DDRB, tmp		; Setup PORTB
+	out DDRD, tmp		; Setup PORTD
+	ldi tmp, $3f		; Setup PORTC with 6 as input and 5:0 as output
+	out DDRC, tmp		; Setup PORTC
+wwvbin: in tmp, DDRC		; Read PORTC for WWVB pulse
+	andi tmp, WWVB		; Filter PORTC to WWVB input only
+	cpi tmp, WWVB		; Check to see if input is high for WWVB pulse
+	brne wwvbin		; If not high, loop and check again
+	rcall pulses		; Relative Call to pulses subroutine
+	clr pbv			; Clear pulse bit value register
+	rcall pvalue		; Relative Call to ptimer (pulse timer to determine 0-bit or 1-bit)
+	//we have value of pulse...now what???
 
 /*** SUBROUTINES ***/
 /* Realtime updating of seconds, minutes, and hours with seconds rollover */
 pulses:	inc ss			; Increment seconds
-		ldi tmp, SMAX	; Prepare to check seconds
-		cp ss, tmp		; Check to see if seconds = 60 
-		brne subend		; Return from subroutine if not at max
-		clr ss			; Reset seconds to 0
-		inc mm			; Increment minutes
-		ldi tmp, MMAX	; Prepare to check minutes
-		cp mm, tmp		; Check to see if minutes = 60
-		brne subend		; Return from subroutine if not at max
-		clr mm			; Reset minutes to 0
-		inc hh			; Increment hours
-		ldi tmp, HMAX	; Prepare to check minutes
-		cp hh, tmp		; Check to see if minutes = 60
-		brne subend		; Return from subroutine if not at max
-		clr hh			; Reset minutes to 0
-subend: ret				; Return from subroutine
+	ldi tmp, SMAX		; Prepare to check seconds
+	cp ss, tmp		; Check to see if seconds = 60 
+	brne subend		; Return from subroutine if not at max
+	clr ss			; Reset seconds to 0
+	inc mm			; Increment minutes
+	ldi tmp, MMAX		; Prepare to check minutes
+	cp mm, tmp		; Check to see if minutes = 60
+	brne subend		; Return from subroutine if not at max
+	clr mm			; Reset minutes to 0
+	inc hh			; Increment hours
+	ldi tmp, HMAX		; Prepare to check minutes
+	cp hh, tmp		; Check to see if minutes = 60
+	brne subend		; Return from subroutine if not at max
+	clr hh			; Reset minutes to 0
+subend: ret			; Return from subroutine
 /* END OF pulses SUBROUTINE */
 
 /* Provides value of pulse and outputs to pbv register */
 /* WWVB PWM Format: pulse of 200mS = 0-bit, 500mS = 1-bit, 800mS = marker bit */
 /* This subroutine checks pulse at 350mS after start of pulse and again at 700mS after start of pulse */
-pvalue:	ldi ctr, TIMER			; Load timer value into register
+pvalue:	ldi ctr, TIMER		; Load timer value into register
 delay:	ldi p_h, HIGH(PRESC)	; Load prescaler values into registers
-		ldi p_l, LOW(PRESC)		; Load prescaler values into registers
-prscl:	sbiw p_h:p_l,1			; Decrement prescaler
-		brne prscl				; Loop decrement as long as prescaler is not 0
-		dec ctr					; Decrement counter when prescaler hits 0
-		brne delay				; Redo until counter is 0
-		ldi tmp, ONE			; Prepare to check pbv
-		cp pbv, tmp				; Checking value of pbv to determine how to proceed
-		breq marker				; Goto marker if pbv equals ONE
-		sbis PINC, PINC6		; Skip next instruction if WWVB high
-		ret						; Return from subroutine (0 bit)
-		inc pbv					; Increment pulse bit value (1 bit or marker bit)
-		rjmp pvalue				; Now to check for a marker bit
-marker:	sbis PINC, PINC6		; Skip next instruction if WWVB high
-		ret						; Return from subroutine (1 bit)
-		inc pbv					; Increment pulse bit value (marker bit)
-		ret						; Return from subroutine (marker bit)
+	ldi p_l, LOW(PRESC)	; Load prescaler values into registers
+prscl:	sbiw p_h:p_l,1		; Decrement prescaler
+	brne prscl		; Loop decrement as long as prescaler is not 0
+	dec ctr			; Decrement counter when prescaler hits 0
+	brne delay		; Redo until counter is 0
+	ldi tmp, ONE		; Prepare to check pbv
+	cp pbv, tmp		; Checking value of pbv to determine how to proceed
+	breq marker		; Goto marker if pbv equals ONE
+	sbis PINC, PINC6	; Skip next instruction if WWVB high
+	ret			; Return from subroutine (0 bit)
+	inc pbv			; Increment pulse bit value (1 bit or marker bit)
+	rjmp pvalue		; Now to check for a marker bit
+marker:	sbis PINC, PINC6	; Skip next instruction if WWVB high
+	ret			; Return from subroutine (1 bit)
+	inc pbv			; Increment pulse bit value (marker bit)
+	ret			; Return from subroutine (marker bit)
 /* END OF pvalue SUBROUTINE */
