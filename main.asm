@@ -13,8 +13,8 @@
 .equ WWVB  = 1<<6	; Bit 6 of Port C is WWVB Input
 
 ; Pulse values
-.equ BIT   = 0	; 0-bit
-.equ MARK  = 1	; Marker bit
+.equ BIT   = 0		; 0-bit
+.equ MARK  = 1		; Marker bit
 
 ; Max values
 .equ HMAX  = 24		; 24 Hours
