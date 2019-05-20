@@ -1,178 +1,85 @@
-; File name: Atomic Clock WWVB.asm
-; Created  : 5/15/2019 4:12:10 PM
+; File name: TC Atomic Clock WWVB.asm
+; Created  : 5/20/2019 4:12:10 PM
 ; Author   : Benjamin Russell KC7MMI
+; MCU Trgt : Atmel AVR ATmega328P at 16MHz
 ; Objective: Device will take output from WWVB 60kHz receiver, decode and provide UTC time, day of year, and leap year indication
 
-; RESOURCES:
-; PORTB 7:0 - LED segments
-; PORTC 6:0 - PORTC6 = Input for WWVB PWM / PORTC5:0 = Outputs 
-; PORTD 7:0 - Outputs
+; WWVB goes High: Reset (clear, restart) timer
+; WWVB goes Low: Check (stop, read) timer
+; Timer reads <150mS: disregard
+; Timer reads 180-220mS: 0-bit
+; Timer reads 480-520mS: 1-bit
+; Timer reads 780-820mS: M-bit
 
-; CONSTANTS
-; Pins
-.equ WWVB  = 6		; Bit 6 of Port C is WWVB Input
+; Define bit register flags Z = ZRO; O = ONE; M = MRK; F = FRM
+; 76543210
+; xxxxFMOZ
+.equ ZRO = 0
+.equ ONE = 1
+.equ MRK = 2
+.equ FRM = 3
 
-; Pulse values
-.equ BIT   = 0		; 0-bit
-.equ MARK  = 1		; Marker bit
+.equ PPD = 64
+.equ VZRO = HIGH(181000/PPD)	; High byte of 181mS ($0b0c) for comparison to TC1
+.equ VONE = HIGH(480000/PPD)	; High byte of 181mS ($1d4c) for comparison to TC1
+.equ VMRK = HIGH(780000/PPD)	; High byte of 181mS ($2f9b) for comparison to TC1
+.equ VMRKH = HIGH(990000/PPD)	; High byte of 181mS ($320c) for comparison to TC1
+;.equ VZROH = HIGH(230000/PPD)	; High byte of 181mS ($0e09) for comparison to TC1
+;.equ VONEH = HIGH(520000/PPD)	; High byte of 181mS ($1fbd) for comparison to TC1
 
-; Max values
-.equ HMAX  = 24		; 24 Hours
-.equ MMAX  = 60		; 60 Minutes
-.equ SMAX  = 60		; 60 Seconds
-.equ LMAX  = 61		; 60 Seconds + 1 Leap Second
+.def tcl = r18		; Timer Counter value (low byte)
+.def tch = r19		; Timer Counter value (high byte)
+.def bvr = r20		; Bit value register
+.def bnr = r21		; Bit number in frame
+.def mnr = r22		; Marker number in minute
 
-; Timer configuration
-.equ PRESC = 40000	; Prescaler value for 10mS resolution (0.0025 / (1/16000000))
-.equ TIMER = 35		; 350mS Timer - Check for 1-BIT then double-up to check for FRAME
-;.equ PRESC = 2		; Prescaler value for 10mS resolution (0.0025 / (1/16000000))
-;.equ TIMER = 2		; 350mS Timer - Check for 1-BIT then double-up to check for FRAME
+.cseg				; Code Segment
+.org 0				; Start Program at Address 0
 
-; LPD Register (r5) Flags for Leap Year, Leap Second and Daylight Savings
-.equ LPY = 2		; Leap Year Flag
-.equ LPS = 1		; Leap Second Flag
-.equ DST = 0		; Daylight Savings Flag (1 = DST / 0 = Standard Time)
+start:	ldi r16, 0			
+		ldi r17, 5
+		sts TCCR1A, r16		; TC1 Control Reg A set to normal for simple counting operations
+		sts TCCR1C, r16		; TC1 Control Reg C set to normal for simple counting operations
+		clr bnr
+		clr bvr
+		clr mnr
 
-; General Purpose Register Definitions
-.def ss  = r0		; Seconds
-.def mm  = r1		; Minutes
-.def hh  = r2		; Hours
-.def d_h = r3		; Day of Year (high)
-.def d_l = r4		; Day of Year (low)
-.def yr  = r5		; Year (2-digit)
-.def lpd = r6		; Leap Year, Leap Second, DST
-.def sel = r8		; LED display select register
+; Here we wait for the start of a pulse
+loop:	sbic PINB, PINB7	; Keep looping until PINB7 is pressed, at which point skip rjmp loop
+		rjmp loop			; Loop until PINB7 pressed
+		sts TCCR1B, r17		; Start TC1 and set prescaler to 1/1024
 
-.def tmp = r16		; Temp
-.def ctr = r17		; Counter
-.def seg = r18		; LED segment driver register
-.def pbv = r19		; Pulse Bit Value (00000000 = 0, 00000001 = 1, 00000010 = MARKER)
-.def mnr = r20		; Frame Number
-.def bnr = r21		; Bit Number
-
-.def p_h = r25		; 16-bit Prescaler
-.def p_l = r24		; 16-bit Prescaler
-
-.cseg			; Code Segment
-.org 0			; Start Program at Address 0
-
-; PROGRAM INITIALIZATION AND SETUP
-start:	clr ss			; Clear Register
-	clr mm			; Clear Register
-	clr hh			; Clear Register
-	clr d_h			; Clear Register
-	clr d_l			; Clear Register
-	clr yr			; Clear Register
-	clr lpd			; Clear Register
-	clr mnr			; Clear Register
-	clr sel			; Clear Register
-	clr pbv			; Clear Register
-	clr tmp			; Clear Register
-	clr seg			; Clear Register
-	clr ctr			; Clear Register
-	clr p_h			; Clear Register
-	clr p_l			; Clear Register
-	ldi tmp, $ff		; Setup PORTB & PORTD as outputs
-	out DDRB, tmp		; Setup PORTB
-	out DDRD, tmp		; Setup PORTD
-	ldi tmp, $3f		; Setup PORTC with 6 as input and 5:0 as output
-	out DDRC, tmp		; Setup PORTC
-
-; START OF MAIN PROGRAM LOOP
-mnloop: sbis PINC, WWVB		; Skip next instruction if WWVB high
-	rjmp mnloop		; If not high, loop and check again
-	rcall pulses		; Relative Call to pulses subroutine to count seconds, minutes and hours
-	rcall pvalue		; Relative Call to pvalue subroutine to determine 0-bit or 1-bit)
-	cpi mnr, 0		; Check marker number
-	breq markr0		; and go to that subroutine
-	cpi mnr, 1		; Check marker number
-	breq markr1		; and go to that subroutine
-	cpi mnr, 2		; Check marker number
-	breq markr2		; and go to that subroutine
-	cpi mnr, 3		; Check marker number
-	breq markr3		; and go to that subroutine
-	cpi mnr, 4		; Check marker number
-	breq markr4		; and go to that subroutine
-	cpi mnr, 5		; Check marker number
-	breq markr5		; and go to that subroutine
-	rjmp mnloop		; Start over
-
-; SUBROUTINES
-; Realtime updating of seconds, minutes, and hours with seconds rollover
-pulses:	inc ss			; Increment seconds
-	ldi tmp, SMAX		; Prepare to check seconds
-	cp ss, tmp		; Check to see if seconds = 60 
-	brne subend		; Return from subroutine if not at max
-	clr ss			; Reset seconds to 0
-	inc mm			; Increment minutes
-	ldi tmp, MMAX		; Prepare to check minutes
-	cp mm, tmp		; Check to see if minutes = 60
-	brne subend		; Return from subroutine if not at max
-	clr mm			; Reset minutes to 0
-	inc hh			; Increment hours
-	ldi tmp, HMAX		; Prepare to check hours
-	cp hh, tmp		; Check to see if hours = 60
-	brne subend		; Return from subroutine if not at max
-	clr hh			; Reset hours to 0
-subend: ret			; Return from subroutine
-
-; Provides value of pulse and outputs to pbv register
-; WWVB PWM Format: pulse of 200mS = 0-bit, 500mS = 1-bit, 800mS = marker bit
-; This subroutine checks pulse at 350mS after start of pulse and again at 700mS after start of pulse
-pvalue:	inc bnr			; Increment bit number register on 0 & 1 bits and clear on marker bits
-	andi pbv, ~1<<BIT	; Clear BIT in pulse value register while leaving current MARK value in-tact
-pvloop:	ldi ctr, TIMER		; Load timer value into register
-delay:	ldi p_h, HIGH(PRESC)	; Load prescaler values into registers
-	ldi p_l, LOW(PRESC)	; Load prescaler values into registers
-prscl:	sbiw p_h:p_l, 1		; Decrement prescaler
-	brne prscl		; Loop decrement as long as prescaler is not 0
-	dec ctr			; Decrement counter when prescaler hits 0
-	brne delay		; Redo until counter is 0 ***end of timer***
-	sbrc pbv, BIT		; Skip branching to marker on first go-around
-	rjmp marker		; Goto marker if pbv equals ONE
-	sbis PINC, WWVB		; Skip returning from subroutine with 0-bit if WWVB a 1
-	rjmp endzro		; Zero out pbv and exit subroutine if WWVB bit is 0
-	ldi pbv, 1<<BIT		; Load pulse bit value register with a 1 bit (or marker bit)
-	rjmp pvloop		; Now to check for a marker bit
-endzro:	clr pbv			; Clear pbv
-	ret			; Return from subroutine with 0 bit
-marker:	sbis PINC, WWVB		; Skip over subroutine exit if WWVB high
-	ret			; Return from subroutine with 1 bit
-	inc mnr			; Increment marker number
-	sbrc pbv, MARK		; Skip clearing marker number register if no immediately previous marker
-	clr mnr			; Clear marker number register if 2 markers received in a row
-	ldi pbv, 1<<MARK	; Update pbv with marker bit
-	clr bnr			; Clear bit number register
-	ret			; Return from subroutine with marker bit
-
-; Decode WWVB signal and provide an integer value for each category of data
-; Minutes
-markr0:		
-	rjmp mnloop		; Return to main loop
-decode:	sbrc pbv, MARK		; Skip next instruction if frame marker
-	ret			; Return from subroutine if marker bit
-	;inc bnr		; Increment bit number
-	clr tmp			; Clear tmp
-	lsl tmp			; Bit shift tmp left
-	inc tmp			; Add 1 to tmp
-
-; Hours
-markr1:
-	rjmp mnloop		; Return to main loop
-
-; Day of year (100s & 10s)
-markr2:
-	rjmp mnloop		; Return to main loop
-
-; Day of year (1s) & DUT1 sign
-markr3:
-	rjmp mnloop		; Return to main loop
-
-; DUT1 value & 2-digit year (10s)
-markr4:
-	rjmp mnloop		; Return to main loop
-
-; 2-digit year (1s) & Leap Year & Leap Second & DST indicators
-markr5:
-	rjmp mnloop		; Return to main loop
-
+; Checking for pulse lengths similar to those listed below and outputs to bit value register
+; WWVB PWM Format: pulse of 200mS = 0-bit; 500mS = 1-bit; 800mS = marker bit
+; Here we wait for the end of the pulse
+; Only comparing high byte of timer since precision is not needed
+pulse:	sbis PINB, PINB7	; Keep looping until PINB7 is released, at which point exit loop
+		rjmp pulse			; Loop utnil key released
+		sts TCCR1B, r16		; Stop TC1 to read values
+		lds tcl, TCNT1L		; Load TC1 Low value into working register
+		lds tch, TCNT1H		; Load TC1 High value into working register
+		sts TCNT1H, r16		; Clear TC1 High value
+		sts TCNT1L, r16		; Clear TC1 Low value
+		cpi tch, VMRKH		; Check for too long of pulse
+		brge CLRBVR			; If too long, clear the bvr
+		cpi tch, VMRK		; Check for MRK pulse
+		brge SETMRK			; If MRK, set MRK; also sets FRM
+		cpi tch, VONE		; Check for ONE pulse
+		brge SETONE			; If ONE, set ONE
+		cpi tch, VZRO		; Check for ZRO pulse
+		brge SETZRO			; If ZRO, set ZRO
+		brlt CLRBVR			; If too short, clear the bvr
+SETMRK:	sbrc bvr, MRK		; Skip SETFRM if no previous MRK
+		rjmp SETFRM			; If previous pulse, SETFRM
+		ldi bvr, 1<<MRK		; If no previous MRK, set MRK in bvr
+		clr bnr				; Clear bit number register
+		rjmp loop			; Start over
+SETONE:	ldi bvr, 1<<ONE		; Set ONE in bvr
+		rjmp loop			; Start over
+SETZRO:	ldi bvr, 1<<ZRO		; Set ZRO in bvr
+		rjmp loop			; Start over
+CLRBVR:	clr bvr				; Clear all bits in bvr
+		rjmp loop			; Start over
+SETFRM:	ldi bvr, 1<<FRM		; Set FRM in bvr
+		clr mnr				; Clear marker number register at start of minute
+		rjmp loop			; Start over
