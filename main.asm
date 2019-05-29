@@ -35,6 +35,7 @@
 .def db4 = r6		; Data Byte 4: High Nibble = Day 1s		& Low Nibble = DUT1 Sign 
 .def db5 = r7		; Data Byte 5: High Nibble = DUT1 Value & Low Nibble = Year 10s
 .def db6 = r8		; Data Byte 6: High Nibble = Year 1s    & Low Nibble = LY/LS/DST
+.def mxv = r9		; Max value
 .def tmp = r16		; Temp
 .def dgt = r17		; Digit register
 .def bvr = r18		; Bit value register
@@ -102,6 +103,13 @@ start:
 	clr bnr
 	clr bvr
 	clr mnr
+	clr db0
+	clr db1
+	clr db2
+	clr db3
+	clr db4
+	clr db5
+	clr db6
 
 ; Here we wait for the start of a pulse
 loop:	
@@ -110,8 +118,41 @@ loop:
 	ldi tmp, 5
 	sts TCCR1B, r16		; Start TC1 and set prescaler to 1/1024
 
-; !!! INSTERT CODE HERE FOR COUNTING SECONDS, MINUTES, HOURS, ETC !!!
-; !!! THIS DATA WILL BE DISPLAYED AND WILL BE UPDATED BY WWVB FURTHER DOWN IN THE CODE !!!
+; Increment Seconds
+	inc db0				; Increment 1s
+	ldi tmp, $0f		; Setup bitmask
+	and tmp, db0		; Copy only lower nibble into tmp
+	cpi tmp, $0a		; Compare
+	brne Print_Time		; If not time to rollover, go print time
+	andi db0, $f0		; Clear lower nibble in register
+	swap db0			; Swap nibbles for easy increment
+	inc db0				; Increment 10s
+	swap db0			; Put 10s back in their place
+	mov tmp, db0		; Copy to tmp for compare
+	cpi tmp, $60		; Compare
+	brne Print_Time		; If not time to rollover, go print time
+	clr db0				; Reset register to 00
+
+; Increment Minutes
+	inc db1				; Increment 1s
+	ldi tmp, $0f		; Setup bitmask
+	and tmp, db1		; Copy only lower nibble into tmp
+	cpi tmp, $0a		; Compare
+	brne Print_Time		; If not time to rollover, go print time
+	andi db1, $f0		; Clear lower nibble in register
+	swap db1			; Swap nibbles for easy increment
+	inc db1				; Increment 10s
+	swap db1			; Put 10s back in their place
+	mov tmp, db1		; Copy to tmp for compare
+	cpi tmp, $60		; Compare
+	brne Print_Time		; If not time to rollover, go print time
+	clr db1				; Reset register to 00
+
+; Increment Hours
+
+; Increment Days
+
+; Increment Years
 
 ; Display time
 ; Sets up data registers to write 4 digits at a time, 2 for left display and 2 for right (saves on SPI bytes)
@@ -119,6 +160,7 @@ loop:
 ; |8|7|6|5|4|3|2|1|.....|8|7|6|5|4|3|2|1|
 ; |B|D| |YR | DAY |.....|HH |MM |SS |DUT|
 
+Print_Time:
 ; Display Seconds
 	ldi d1h, $03			; Display 1, digit 3
 	mov d1l, db0			; Display 1, seconds 1s
