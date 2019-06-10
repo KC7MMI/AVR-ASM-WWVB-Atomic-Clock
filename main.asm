@@ -4,6 +4,13 @@
 ; Author   : Benjamin Russell KC7MMI
 ; MCU Trgt : Atmel AVR ATmega328P/Arduino Uno at 16MHz
 ; Objective: Device will take output from WWVB 60kHz receiver, decode and provide UTC time, day of year, and leap year indication
+; "ATmega328P" memory use summary [bytes]:
+; Segment   Begin    End      Code   Data   Used    Size   Use%
+; ---------------------------------------------------------------
+; [.cseg] 0x000000 0x0002c0    704      0    704   32768   2.1%
+; [.dseg] 0x000100 0x000100      0      0      0    2048   0.0%
+; [.eseg] 0x000000 0x000000      0      0      0    1024   0.0%
+; Assembly complete, 0 errors. 0 warnings
 
 ; Define bit register flags Z = ZRO; O = ONE; M = MRK; F = FRM
 ; 76543210
